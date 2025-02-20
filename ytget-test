@@ -1,0 +1,133 @@
+#!/bin/bash
+
+# Проверка зависимостей
+check_dependencies() {
+    for cmd in yt-dlp notify-send tsp rofi; do
+        if ! command -v $cmd &> /dev/null; then
+            echo "Ошибка: $cmd не установлен. Пожалуйста, установите его."
+            exit 1
+        fi
+    done
+}
+
+# Проверяем, передан ли аргумент
+if [ -z "$1" ]; then
+    echo "Использование: $0 <URL видео или музыки> [дополнительные параметры для yt-dlp]"
+    exit 1
+fi
+
+url="$1"  # Получаем первый аргумент командной строки как URL
+shift  # Убираем первый аргумент, чтобы оставить только дополнительные параметры
+proxy="socks://localhost:1080"  # Задаем прокси один раз
+
+notify() {
+    notify-send -u low -t 800 "$1" "$2"
+}
+
+download_video() {
+    local embed_subs_option=""
+    
+    # Проверяем, установлен ли rofi
+    if command -v rofi &> /dev/null; then
+        # Если rofi установлен, используем его для выбора
+        while true; do
+            choice=$(echo -e "Да\nНет" | rofi -dmenu -p "Хотите скачать видео с субтитрами?")
+            case "$choice" in
+                "Да" ) 
+                    sub_lang=$(echo -e "ru\nen\nfr\nes" | rofi -dmenu -p "Выберите язык субтитров:")
+                    embed_subs_option="--embed-subs --sub-lang $sub_lang"  # Устанавливаем опции для субтитров
+                    break
+                    ;;
+                "Нет" ) 
+                    # Убираем вывод в терминал
+                    :  # Пустая команда, чтобы ничего не выводить
+                    break
+                    ;;
+                * ) 
+                    echo "Неверный выбор. Пожалуйста, выберите 'Да' или 'Нет'."
+                    ;;
+            esac
+        done
+    else
+        # Если rofi не установлен, используем read
+        while true; do
+            read -p "Хотите скачать видео с субтитрами? (y/n): " choice
+            case "$choice" in
+                y|Y ) 
+                    read -p "Введите язык субтитров (ru, en, fr, es): " sub_lang
+                    embed_subs_option="--embed-subs --sub-lang $sub_lang"  # Устанавливаем опции для субтитров
+                    break
+                    ;;
+                n|N ) 
+                    # Убираем вывод в терминал
+                    :  # Пустая команда, чтобы ничего не выводить
+                    break
+                    ;;
+                * ) 
+                    echo "Неверный выбор. Пожалуйста, введите 'y' или 'n'."
+                    ;;
+            esac
+        done
+    fi
+
+    # Запускаем загрузку видео с выбранными параметрами в фоновом режиме
+    tsp -L "download video" yt-dlp $embed_subs_option --embed-metadata -i --proxy "$proxy" -f "bestvideo[height<=?720][vcodec!=vp9]+bestaudio/best" --exec "ytpostname {}" "$url" > /dev/null 2>&1 &
+
+    # Получаем название видео с использованием прокси в фоновом режиме
+    {
+        title=$(yt-dlp --proxy "$proxy" --get-title "$url" 2>/dev/null)
+
+        # Проверяем, удалось ли получить название видео
+        if [ $? -ne 0 ]; then
+            title="Видео с youtube"
+        fi
+
+        # Уведомление о добавлении видео в очередь с названием
+        notify "Добавление видео в очередь" "Название: $title"
+        
+        # Уведомление о завершении загрузки с названием
+        tsp -d notify-send "youtube downloader" "Скачано: $title" > /dev/null 2>&1
+    } &  # Запускаем в фоновом режиме
+}
+
+
+download_music() {
+    # Запускаем загрузку музыки с заданными параметрами
+    tsp -L "download music" yt-dlp --embed-metadata --embed-thumbnail -o "/home/uk/d/mus/download/%(title)s.%(ext)s" --extract-audio --audio-format mp3 --audio-quality=0 --proxy "$proxy" --exec "ytpostname {}" "$url" > /dev/null 2>&1 &
+
+    # Получаем название музыки с использованием прокси в фоновом режиме
+    {
+        title=$(yt-dlp --proxy "$proxy" --get-title "$url" 2>/dev/null)
+
+        # Проверяем, удалось ли получить название музыки
+        if [ $? -ne 0 ]; then
+            title="Аудио с youtube"
+        fi
+
+        # Уведомление о добавлении музыки в очередь с названием
+        notify "Добавление музыки в очередь" "Название: $title"
+        
+        # Уведомление о завершении загрузки с названием
+        tsp -d notify-send "youtube downloader" "Скачано: $title" > /dev/null 2>&1
+    } &  # Запускаем в фоновом режиме
+}
+
+# Основная логика выбора между загрузкой видео и музыки
+if command -v rofi &> /dev/null; then
+    choice=$(echo -e "Видео\nАудио" | rofi -dmenu -p "Что вы хотите скачать?")
+else
+    read -p "Что вы хотите скачать? (введите 'видео' или 'музыка'): " choice
+fi
+
+case "$choice" in
+    "Видео" )
+        download_video
+        ;;
+    "Аудио" )
+        download_music
+        ;;
+    * )
+        echo "Неверный выбор. Пожалуйста, введите 'видео' или 'музыка'."
+        exit 1
+        ;;
+esac

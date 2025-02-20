@@ -1,0 +1,119 @@
+#!/bin/bash
+
+# Загрузка конфигурации
+CONFIG_FILE="$HOME/.config/ytget/config"
+
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+    echo "Конфигурация загружена из $CONFIG_FILE"
+else
+    echo "Конфигурационный файл $CONFIG_FILE не найден. Используются значения по умолчанию."
+fi
+
+# Установка значений по умолчанию, если они не заданы в конфигурации
+: "${PROXY:=""}"
+: "${LANGUAGES:=(\"ru\" \"en\" \"fr\" \"es\")}"
+: "${VIDEO_DIR:=/home/videos}"
+: "${AUDIO_DIR:=/home/music}"
+
+# Проверка зависимостей
+check_dependencies() {
+    for cmd in yt-dlp notify-send tsp rofi; do
+        if ! command -v $cmd &> /dev/null; then
+            echo "Ошибка: $cmd не установлен. Пожалуйста, установите его."
+            exit 1
+        fi
+    done
+}
+
+# Проверяем, передан ли аргумент
+if [ -z "$1" ]; then
+    echo "Использование: $0 <URL видео или музыки> [дополнительные параметры для yt-dlp]"
+    exit 1
+fi
+
+url="$1"  # Получаем первый аргумент командной строки как URL
+shift  # Убираем первый аргумент, чтобы оставить только дополнительные параметры
+proxy="$PROXY"  # Задаем прокси из конфигурации
+
+notify() {
+    notify-send -u low -t 800 "$1" "$2"
+}
+
+get_title() {
+    local title
+    title=$(yt-dlp --proxy "$proxy" --get-title "$1" 2>/dev/null)
+    if [ $? -ne 0 ]; then
+        title="Не удалось получить название"
+    fi
+    echo "$title"
+}
+
+download() {
+    local type="$1"
+    local embed_subs_option=""
+    local languages=("${LANGUAGES[@]}")  # Массив языков субтитров
+    local language_options=""
+
+    # Создаем строку для выбора языков
+    for lang in "${languages[@]}"; do
+        language_options+="$lang\n"
+    done
+
+    if [ "$type" == "video" ]; then
+        # Логика для видео
+        while true; do
+            choice=$(echo -e "Да\nНет" | rofi -dmenu -p "Хотите скачать видео с субтитрами?")
+            case "$choice" in
+                "Да" ) 
+                    sub_lang=$(echo -e "$language_options" | rofi -dmenu -p "Выберите язык субтитров:")
+                    embed_subs_option="--embed-subs --sub-lang $sub_lang"
+                    break
+                    ;;
+                "Нет" ) 
+                    break
+                    ;;
+                * ) 
+                    echo "Неверный выбор. Пожалуйста, выберите 'Да' или 'Нет'."
+                    ;;
+            esac
+        done
+
+        # Запускаем загрузку видео, используя VIDEO_DIR
+        tsp -L "download video" yt-dlp $embed_subs_option --embed-metadata -i --proxy "$proxy" -f "bestvideo[height<=?720][vcodec!=vp9]+bestaudio/best" -o "$VIDEO_DIR/%(title)s.%(ext)s" --exec "ytpostname {}" "$url" > /dev/null 2>&1 &
+
+    elif [ "$type" == "audio" ]; then
+        # Запускаем загрузку музыки, используя AUDIO_DIR
+        tsp -L "download music" yt-dlp --embed-metadata --embed-thumbnail -o "$AUDIO_DIR/%(title)s.%(ext)s" --extract-audio --audio-format mp3 --audio-quality=0 --proxy "$proxy" --exec "ytpostname {}" "$url" > /dev/null 2>&1 &
+    else
+        echo "Неверный тип загрузки: $type. Ожидался 'video' или 'audio'."
+        return 1
+    fi
+
+    # Получаем название и уведомляем
+    {
+        title=$(get_title "$url")
+        notify "Добавление $type в очередь" "Название: $title"
+        tsp -d notify-send "youtube downloader" "Скачано: $title" > /dev/null 2>&1
+    } &  # Запускаем в фоновом режиме
+}
+
+# Основная логика выбора между загрузкой видео и музыки
+if command -v rofi &> /dev/null; then
+    choice=$(echo -e "Видео\nАудио" | rofi -dmenu -p "Что вы хотите скачать?")
+else
+    read -p "Что вы хотите скачать? (введите 'видео' или 'музыка'): " choice
+fi
+
+case "$choice" in
+    "Видео" )
+        download "video"
+        ;;
+    "Аудио" )
+        download "audio"
+        ;;
+    * )
+        echo "Неверный выбор. Пожалуйста, введите 'видео' или 'музыка'."
+        exit 1
+        ;;
+esac

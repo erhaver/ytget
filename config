@@ -1,0 +1,5 @@
+# Конфигурация для ytget
+PROXY="socks://localhost:1080"
+LANGUAGES=("ru" "en" "fr" "es")
+VIDEO_DIR="/home/uk/d/videos"  # Директория для сохранения видео
+AUDIO_DIR="/home/uk/d/mus/download"  # Директория для сохранения музыки
