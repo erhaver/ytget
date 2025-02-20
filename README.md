@@ -44,7 +44,4 @@ ytget <URL видео или музыки>
 ## Зависимости
 Для работы скрипта необходимы следующие утилиты:
 
-yt-dlp
-notify-send
-tsp
-rofi
+`yt-dlp notify-send tsp rofi`
